@@ -1,27 +1,65 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { access, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { spawnSync } from 'node:child_process'
 import { scaffold } from '../bin/create-anyo-world.mjs'
 
-const anyoPackageRoot = path.resolve(process.env.ANYO_TEST_PACKAGE_ROOT || 'node_modules/@blcklab/anyo')
 const npmExecutable = process.platform === 'win32' ? 'npm.cmd' : 'npm'
+const expectedAnyoVersion = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')).devDependencies['@blcklab/anyo']
+const toolingError = 'Install the pinned @blcklab/anyo dependency with npm ci at the generator repository root. Check ANYO_TEST_PACKAGE_ROOT if set.'
 
-async function linkGeneratedAnyoTooling(target) {
-  await access(anyoPackageRoot)
+async function resolveAnyoTooling() {
+  try {
+    const configured = process.env.ANYO_TEST_PACKAGE_ROOT
+    const root = await realpath(configured
+      ? path.resolve(configured)
+      : path.dirname(fileURLToPath(import.meta.resolve('@blcklab/anyo/package.json'))))
+    const manifest = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'))
+    assert.equal(manifest.name, '@blcklab/anyo')
+    assert.equal(manifest.version, expectedAnyoVersion)
+    // A built package must expose a public ESM entry, not an empty placeholder directory.
+    const entry = manifest.exports?.['.']?.import
+    assert.equal(typeof entry, 'string', 'Missing public Anyo ESM export')
+    await readFile(path.resolve(root, entry))
+    return root
+  } catch (error) {
+    throw new Error(`Anyo test dependency is missing or invalid: ${error.message}. ${toolingError}`, { cause: error })
+  }
+}
+
+async function installGeneratedAnyoTooling(target) {
+  const source = await resolveAnyoTooling()
   const scope = path.join(target, 'node_modules', '@blcklab')
-  const link = path.join(scope, 'anyo')
+  const destination = path.join(scope, 'anyo')
   await mkdir(scope, { recursive: true })
-  try { await access(link); return } catch {}
-  await symlink(anyoPackageRoot, link, process.platform === 'win32' ? 'junction' : 'dir')
+  // Tests use isolated copies of the real installed package. No symlink-based
+  // package resolution, registry request, or mocked validation is necessary.
+  await rm(destination, { recursive: true, force: true })
+  await cp(source, destination, { recursive: true, dereference: true })
 }
 
 async function runGeneratedScript(target, script) {
-  await linkGeneratedAnyoTooling(target)
-  const { spawnSync } = await import('node:child_process')
+  await installGeneratedAnyoTooling(target)
   return spawnSync(npmExecutable, ['run', script, '--silent'], { cwd: target, encoding: 'utf8' })
 }
+
+test('installed Anyo tooling resolves from an isolated generated project', async () => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'create-anyo-tooling-'))
+  try {
+    await installGeneratedAnyoTooling(cwd)
+    const run = spawnSync(process.execPath, ['--input-type=module', '-e', `
+      import assert from 'node:assert/strict';
+      import * as anyo from '@blcklab/anyo';
+      for (const name of ['inspectWorldDocument', 'resolveWorldDocumentImports', 'bundleWorldDocument', 'validateWorldDocument']) {
+        assert.equal(typeof anyo[name], 'function', name);
+      }
+    `], { cwd, encoding: 'utf8' })
+    assert.equal(run.status, 0, `${toolingError}\n${run.stderr || run.error || ''}`)
+  } finally { await rm(cwd, { recursive: true, force: true }) }
+})
 
 test('scaffolds an exact OSM GitHub world with manifest-owned geography and no registry', async () => {
   const cwd = await mkdtemp(path.join(os.tmpdir(), 'create-anyo-world-'))
