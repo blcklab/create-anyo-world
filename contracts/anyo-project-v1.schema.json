@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://blcklab.dev/contracts/anyo-project-v1.schema.json",
+  "title": "Anyo Project v1",
+  "description": "Repository-level tooling metadata for a portable Anyo world project. The runtime world remains world.anyo.json.",
+  "type": "object",
+  "required": [
+    "schema",
+    "id",
+    "title",
+    "world",
+    "directories"
+  ],
+  "properties": {
+    "schema": {
+      "const": "anyo-project@1"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*$"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "world": {
+      "const": "./world.anyo.json"
+    },
+    "directories": {
+      "type": "object",
+      "required": [
+        "assets",
+        "webSurfaces"
+      ],
+      "properties": {
+        "assets": {
+          "const": "./assets/"
+        },
+        "webSurfaces": {
+          "const": "./web-surface/"
+        }
+      },
+      "additionalProperties": true
+    },
+    "manifests": {
+      "type": "object",
+      "properties": {
+        "atlas": {
+          "const": "./atlas.world.json"
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

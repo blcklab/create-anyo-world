@@ -1,0 +1,242 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://blcklab.dev/contracts/anyo-world-manifest-v1.schema.json",
+  "title": "Anyo World Manifest v1",
+  "type": "object",
+  "required": [
+    "schema",
+    "id",
+    "title",
+    "world"
+  ],
+  "anyOf": [
+    {
+      "required": [
+        "location"
+      ]
+    },
+    {
+      "required": [
+        "lot"
+      ]
+    }
+  ],
+  "properties": {
+    "schema": {
+      "const": "anyo-world-manifest@1"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "version": {
+      "type": "string"
+    },
+    "revision": {
+      "type": [
+        "string",
+        "number"
+      ]
+    },
+    "lotId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "world": {
+      "type": "string",
+      "minLength": 1
+    },
+    "assetsBase": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "category": {
+      "type": "string"
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "location": {
+      "type": "object",
+      "required": [
+        "latitude",
+        "longitude"
+      ],
+      "properties": {
+        "latitude": {
+          "type": "number",
+          "minimum": -90,
+          "maximum": 90
+        },
+        "longitude": {
+          "type": "number",
+          "minimum": -180,
+          "maximum": 180
+        },
+        "zoom": {
+          "type": "number",
+          "minimum": 3,
+          "maximum": 20
+        },
+        "radiusMeters": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "osm": {
+          "type": "object",
+          "required": [
+            "type",
+            "id"
+          ],
+          "properties": {
+            "provider": {
+              "type": "string",
+              "default": "openstreetmap"
+            },
+            "type": {
+              "enum": [
+                "node",
+                "way",
+                "relation"
+              ]
+            },
+            "id": {
+              "type": [
+                "string",
+                "number"
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": true
+    },
+    "lot": {
+      "type": "object",
+      "required": [
+        "coordinate"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "coordinate": {
+          "type": "object",
+          "required": [
+            "latitude",
+            "longitude"
+          ],
+          "properties": {
+            "latitude": {
+              "type": "number",
+              "minimum": -90,
+              "maximum": 90
+            },
+            "longitude": {
+              "type": "number",
+              "minimum": -180,
+              "maximum": 180
+            }
+          },
+          "additionalProperties": false
+        },
+        "radiusMeters": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "osm": {
+          "type": "object",
+          "required": [
+            "type",
+            "id"
+          ],
+          "properties": {
+            "provider": {
+              "type": "string",
+              "default": "openstreetmap"
+            },
+            "type": {
+              "enum": [
+                "node",
+                "way",
+                "relation"
+              ]
+            },
+            "id": {
+              "type": [
+                "string",
+                "number"
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": true
+    },
+    "placement": {
+      "type": "object",
+      "properties": {
+        "anchor": {
+          "type": "string"
+        },
+        "fit": {
+          "enum": [
+            "validate",
+            "anchor-only",
+            "uniform-contain",
+            "uniform-cover"
+          ]
+        },
+        "northAxis": {
+          "enum": [
+            "+x",
+            "-x",
+            "+z",
+            "-z"
+          ]
+        },
+        "groundLevel": {
+          "type": "number"
+        },
+        "mapMatch": {
+          "enum": [
+            "exact-building",
+            "nearest-building",
+            "coordinate-only",
+            "none",
+            "isolated"
+          ]
+        },
+        "maximumDistanceMeters": {
+          "type": "number",
+          "minimum": 5,
+          "maximum": 500
+        },
+        "fallback": {
+          "enum": [
+            "nearest-building",
+            "isolated"
+          ]
+        },
+        "portal": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

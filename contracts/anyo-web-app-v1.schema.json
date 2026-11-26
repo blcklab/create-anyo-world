@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://blcklab.dev/contracts/anyo-web-app-v1.schema.json",
+  "title": "Anyo Repository Web App v1",
+  "type": "object",
+  "required": ["schema", "id", "entry"],
+  "properties": {
+    "schema": { "const": "anyo-web-app@1" },
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "title": { "type": "string" },
+    "description": { "type": "string" },
+    "entry": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "additionalProperties": true
+}
