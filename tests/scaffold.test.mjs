@@ -5,9 +5,38 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { scaffold } from '../bin/create-anyo-world.mjs'
 
-const npmExecutable = process.platform === 'win32' ? 'npm.cmd' : 'npm'
+// Windows .cmd launchers cannot be spawned directly without a shell. Use
+// npm's actual JavaScript CLI, preserving real npm lifecycle/script execution.
+function runNpmScript(target, script) {
+  const args = ['run', script, '--silent']
+  const candidates = [process.env.npm_execpath]
+  if (process.platform === 'win32') {
+    for (const dir of [path.dirname(process.execPath), ...(process.env.PATH || '').split(path.delimiter)]) {
+      if (dir) candidates.push(path.join(dir.replace(/^"|"$/g, ''), 'node_modules', 'npm', 'bin', 'npm-cli.js'))
+    }
+  }
+  const cli = candidates.find(file => file && /\.(?:c|m)?js$/i.test(file) && existsSync(file))
+  if (!cli && process.platform === 'win32') {
+    throw new Error('Cannot locate npm-cli.js. Run the test suite with npm run check.')
+  }
+  const run = spawnSync(cli ? process.execPath : 'npm', cli ? [cli, ...args] : args, {
+    cwd: target, encoding: 'utf8', windowsHide: true,
+  })
+  if (run.error) throw run.error
+  assert.equal(run.signal, null, `npm run ${script} terminated by ${run.signal}: ${run.stderr || ''}`)
+  assert.equal(typeof run.status, 'number', `npm run ${script} did not return an exit code`)
+  return run
+}
+
+async function stopDevServer(child) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return
+  const closed = new Promise(resolve => child.once('close', resolve))
+  child.kill('SIGTERM')
+  await closed
+}
 const expectedAnyoVersion = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')).devDependencies['@blcklab/anyo']
 const toolingError = 'Install the pinned @blcklab/anyo dependency with npm ci at the generator repository root. Check ANYO_TEST_PACKAGE_ROOT if set.'
 
@@ -37,13 +66,13 @@ async function installGeneratedAnyoTooling(target) {
   await mkdir(scope, { recursive: true })
   // Tests use isolated copies of the real installed package. No symlink-based
   // package resolution, registry request, or mocked validation is necessary.
-  await rm(destination, { recursive: true, force: true })
+  await rm(destination, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   await cp(source, destination, { recursive: true, dereference: true })
 }
 
 async function runGeneratedScript(target, script) {
   await installGeneratedAnyoTooling(target)
-  return spawnSync(npmExecutable, ['run', script, '--silent'], { cwd: target, encoding: 'utf8' })
+  return runNpmScript(target, script)
 }
 
 test('installed Anyo tooling resolves from an isolated generated project', async () => {
@@ -58,7 +87,7 @@ test('installed Anyo tooling resolves from an isolated generated project', async
       }
     `], { cwd, encoding: 'utf8' })
     assert.equal(run.status, 0, `${toolingError}\n${run.stderr || run.error || ''}`)
-  } finally { await rm(cwd, { recursive: true, force: true }) }
+  } finally { await rm(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) }
 })
 
 test('scaffolds an exact OSM GitHub world with manifest-owned geography and no registry', async () => {
@@ -99,7 +128,7 @@ test('scaffolds an exact OSM GitHub world with manifest-owned geography and no r
     assert.equal(publicUrl.searchParams.has('lat'), false)
     assert.equal(publicUrl.searchParams.has('lng'), false)
     assert.match(result.localAtlasUrl, /manifest=/)
-  } finally { await rm(cwd, { recursive: true, force: true }) }
+  } finally { await rm(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) }
 })
 
 test('coordinate-only starter keeps geography entirely in atlas.world.json', async () => {
@@ -116,7 +145,7 @@ test('coordinate-only starter keeps geography entirely in atlas.world.json', asy
     const world = JSON.parse(await readFile(path.join(result.target, 'world.anyo.json'), 'utf8'))
     assert.ok(world.entities.find(entity => entity.id === 'map-exterior')?.components?.some(component => component.type === 'anyo.mapExterior'))
     assert.equal(result.atlasUrl, null)
-  } finally { await rm(cwd, { recursive: true, force: true }) }
+  } finally { await rm(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) }
 })
 
 test('generated project validates without registry tooling', async () => {
@@ -130,7 +159,7 @@ test('generated project validates without registry tooling', async () => {
     const pkg = JSON.parse(await readFile(path.join(result.target, 'package.json'), 'utf8'))
     assert.deepEqual(Object.keys(pkg.scripts).sort(), ['bundle', 'check', 'dev', 'validate'])
     assert.equal(pkg.devDependencies['@blcklab/anyo'], '0.11.0-rc.37')
-  } finally { await rm(cwd, { recursive: true, force: true }) }
+  } finally { await rm(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) }
 })
 
 
@@ -141,7 +170,7 @@ test('generated bare repository URL intentionally omits ref so Atlas uses its ma
     const url = new URL(result.atlasUrl)
     assert.equal(url.searchParams.get('world'), 'blcklab/main-world')
     assert.equal(url.searchParams.has('ref'), false)
-  } finally { await rm(cwd, { recursive: true, force: true }) }
+  } finally { await rm(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) }
 })
 
 test('CLI rejects repository identities and refs Atlas would reject', async () => {
@@ -149,7 +178,7 @@ test('CLI rejects repository identities and refs Atlas would reject', async () =
   try {
     await assert.rejects(() => scaffold(['bad-owner', '--lat=14.5', '--lng=121.0', '--github=bad--owner/world'], { cwd, log() {} }), /owner/)
     await assert.rejects(() => scaffold(['bad-ref', '--lat=14.5', '--lng=121.0', '--github=blcklab/world', '--ref=feature/world'], { cwd, log() {} }), /ref/)
-  } finally { await rm(cwd, { recursive: true, force: true }) }
+  } finally { await rm(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) }
 })
 
 test('generated dev server honors --port=VALUE instead of hard-coding 4174', async () => {
@@ -195,8 +224,8 @@ test('generated dev server honors --port=VALUE instead of hard-coding 4174', asy
     const manifest = await response.json()
     assert.equal(manifest.id, 'frontier')
   } finally {
-    if (child && child.exitCode === null) child.kill('SIGTERM')
-    await rm(cwd, { recursive: true, force: true })
+    await stopDevServer(child)
+    await rm(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   }
 })
 
@@ -210,7 +239,7 @@ test('generated dev server accepts --port VALUE and reports friendly EADDRINUSE 
     assert.match(source, /EADDRINUSE/)
     assert.doesNotMatch(source, /server\.listen\(4174/)
   } finally {
-    await rm(cwd, { recursive: true, force: true })
+    await rm(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   }
 })
 
@@ -232,7 +261,7 @@ test('loader mode creates a standalone World Loader repository without geography
     const readme = await readFile(path.join(result.target, 'README.md'), 'utf8')
     assert.match(readme, /Anyo World Loader/)
     assert.match(readme, /\/blcklab\/loader-room\?ref=v1\.2\.3/)
-  } finally { await rm(cwd, { recursive: true, force: true }) }
+  } finally { await rm(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) }
 })
 
 test('both mode remains geographic and is directly loadable by World Loader', async () => {
@@ -247,7 +276,7 @@ test('both mode remains geographic and is directly loadable by World Loader', as
     const world = JSON.parse(await readFile(path.join(result.target, 'world.anyo.json'), 'utf8'))
     assert.equal(world.data.location.latitude, 14.55)
     assert.ok(world.entities.some(entity => entity.components?.some(component => component.type === 'anyo.mapSpawn')))
-  } finally { await rm(cwd, { recursive: true, force: true }) }
+  } finally { await rm(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) }
 })
 
 test('web surface scaffold creates an anyo-web-app manifest and matching world entity', async () => {
@@ -279,7 +308,7 @@ test('web surface scaffold creates an anyo-web-app manifest and matching world e
     const bundled = JSON.parse(await readFile(path.join(result.target, 'dist', 'world.anyo.json'), 'utf8'))
     const bundledSurface = bundled.entities.find(entity => entity.type === 'web-surface')
     assert.equal(bundledSurface.webSurface.fallback.image, '../assets/web-surface-fallback.svg')
-  } finally { await rm(cwd, { recursive: true, force: true }) }
+  } finally { await rm(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) }
 })
 
 test('bare --web-surface uses dashboard and defaults to HD without accidental DPR multiplication', async () => {
@@ -291,7 +320,7 @@ test('bare --web-surface uses dashboard and defaults to HD without accidental DP
     const surface = world.entities.find(entity => entity.id === 'web/dashboard')
     assert.deepEqual(surface.webSurface.presentation.resolution, [1280, 720])
     assert.equal(surface.webSurface.presentation.devicePixelRatio, undefined)
-  } finally { await rm(cwd, { recursive: true, force: true }) }
+  } finally { await rm(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) }
 })
 
 test('generated validation checks World Loader and Web Surface contracts', async () => {
@@ -307,11 +336,10 @@ test('generated validation checks World Loader and Web Surface contracts', async
     const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
     manifest.entry = '../escape.html'
     await writeFile(manifestPath, JSON.stringify(manifest, null, 2))
-    const { spawnSync } = await import('node:child_process')
-    const rejected = spawnSync(npmExecutable, ['run', 'validate', '--silent'], { cwd: result.target, encoding: 'utf8' })
+    const rejected = runNpmScript(result.target, 'validate')
     assert.notEqual(rejected.status, 0)
     assert.match(rejected.stderr, /entry must stay inside the app directory/)
-  } finally { await rm(cwd, { recursive: true, force: true }) }
+  } finally { await rm(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) }
 })
 
 
@@ -336,7 +364,7 @@ test('default starter is a simple single-file World 0.9 project and bundles thro
     const bundled = JSON.parse(await readFile(path.join(result.target, 'dist', 'world.anyo.json'), 'utf8'))
     assert.equal(bundled.version, '0.9')
     assert.equal(bundled.imports, undefined)
-  } finally { await rm(cwd, { recursive: true, force: true }) }
+  } finally { await rm(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) }
 })
 
 test('--modular scaffolds models/, validates Object 0.1 imports, and bundles deterministically', async () => {
@@ -370,7 +398,7 @@ test('--modular scaffolds models/, validates Object 0.1 imports, and bundles det
     assert.equal(bundled.entities.find(entity => entity.id === 'centerpiece').composition, 'centerpiece::root')
     assert.doesNotMatch(firstText, /anyo-project:\/\//)
     assert.doesNotMatch(firstText, /file:\/\//)
-  } finally { await rm(cwd, { recursive: true, force: true }) }
+  } finally { await rm(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) }
 })
 
 test('generated validation rejects an invalid imported native object through Anyo core', async () => {
@@ -384,7 +412,7 @@ test('generated validation rejects an invalid imported native object through Any
     const validation = await runGeneratedScript(result.target, 'validate')
     assert.notEqual(validation.status, 0)
     assert.match(validation.stderr, /ANYO_OBJECT_ROOT_TYPE_INVALID/)
-  } finally { await rm(cwd, { recursive: true, force: true }) }
+  } finally { await rm(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) }
 })
 
 test('generated local document loader refuses network imports instead of fetching implicitly', async () => {
@@ -398,7 +426,7 @@ test('generated local document loader refuses network imports instead of fetchin
     const validation = await runGeneratedScript(result.target, 'validate')
     assert.notEqual(validation.status, 0)
     assert.match(validation.stderr, /resolves local project imports only/)
-  } finally { await rm(cwd, { recursive: true, force: true }) }
+  } finally { await rm(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) }
 })
 
 test('loader mode rejects geography and web resolution requires a web surface', async () => {
@@ -408,7 +436,7 @@ test('loader mode rejects geography and web resolution requires a web surface', 
     await assert.rejects(() => scaffold(['bad-web', '--mode=loader', '--web-resolution=1080p'], { cwd, log() {} }), /requires --web-surface/)
     await assert.rejects(() => scaffold(['bad-mode', '--mode=desktop'], { cwd, log() {} }), /--mode must be atlas, loader, or both/)
     await assert.rejects(() => scaffold(['bad-app', '--mode=loader', '--web-surface=../escape'], { cwd, log() {} }), /portable app id/)
-  } finally { await rm(cwd, { recursive: true, force: true }) }
+  } finally { await rm(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) }
 })
 
 test('generated dev server serves Web Surface MIME types', async () => {
@@ -440,8 +468,8 @@ test('generated dev server serves Web Surface MIME types', async () => {
     const svg = await fetch(`http://127.0.0.1:${port}/assets/web-surface-fallback.svg`)
     assert.match(svg.headers.get('content-type') || '', /image\/svg\+xml/)
   } finally {
-    if (child && child.exitCode === null) child.kill('SIGTERM')
-    await rm(cwd, { recursive: true, force: true })
+    await stopDevServer(child)
+    await rm(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   }
 })
 
@@ -463,7 +491,7 @@ test('project contract is additive and preserves the root runtime world boundary
     assert.ok(files.includes('web-surface'))
     const gitignore = await readFile(path.join(result.target, '.gitignore'), 'utf8')
     assert.match(gitignore, /^\.anyo\/$/m)
-  } finally { await rm(cwd, { recursive: true, force: true }) }
+  } finally { await rm(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) }
 })
 
 test('generated validation rejects project metadata that would break the canonical loader boundary', async () => {
@@ -477,7 +505,7 @@ test('generated validation rejects project metadata that would break the canonic
     const run = await runGeneratedScript(result.target, 'validate')
     assert.notEqual(run.status, 0)
     assert.match(run.stderr, /world must be \.\/world\.anyo\.json/)
-  } finally { await rm(cwd, { recursive: true, force: true }) }
+  } finally { await rm(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) }
 })
 
 test('Web Surface contract accepts framework build output without declaring a framework', async () => {
@@ -496,7 +524,7 @@ test('Web Surface contract accepts framework build output without declaring a fr
     const run = await runGeneratedScript(result.target, 'validate')
     assert.equal(run.status, 0, run.stderr)
     assert.match(run.stdout, /Web Surface apps: PASS \(1\)/)
-  } finally { await rm(cwd, { recursive: true, force: true }) }
+  } finally { await rm(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) }
 })
 
 
@@ -506,7 +534,7 @@ test('rejects dot-only names and empty coordinates without writing a scaffold', 
     await assert.rejects(() => scaffold(['..', '--mode=loader', '--force'], {cwd,log(){}}), /Project name/)
     await assert.rejects(() => scaffold(['empty-lat','--lat=','--lng=121'], {cwd,log(){}}), /Latitude/)
     assert.deepEqual(await readdir(cwd), [])
-  } finally { await rm(cwd,{recursive:true,force:true}) }
+  } finally { await rm(cwd,{ recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) }
 })
 
 test('dev server exposes root world and modular assets with correct Loader preview URL but blocks private paths and escaping symlinks', async () => {
@@ -529,7 +557,7 @@ test('dev server exposes root world and modular assets with correct Loader previ
     const deadline=Date.now()+5000
     while(!stdout.includes('World Loader preview') && Date.now()<deadline && child.exitCode===null) await new Promise(resolve=>setTimeout(resolve,25))
     assert.equal(child.exitCode,null,stderr)
-    const url=new URL(stdout.match(/http:\/\/localhost:5173\/\?registryRoot=\S+/)[0])
+    const url=new URL(stdout.match(/http:\/\/127\.0\.0\.1:4173\/\?registryRoot=\S+/)[0])
     const root=url.searchParams.get('registryRoot')
     assert.equal(root,`http://127.0.0.1:${port}/`)
     const world=await (await fetch(root+'world.anyo.json')).json()
@@ -540,5 +568,143 @@ test('dev server exposes root world and modular assets with correct Loader previ
     assert.equal((await fetch(root+'world.anyo.json',{method:'OPTIONS'})).status,204)
     for(const file of ['.env','scripts/dev.mjs','node_modules/x','assets/outside.txt']) assert.equal((await fetch(root+file)).status,404)
     assert.equal((await fetch(root+'world.anyo.json',{method:'POST'})).status,405)
-  } finally { if(child && child.exitCode===null){child.kill();await new Promise(resolve=>child.once('exit',resolve))} await rm(cwd,{recursive:true,force:true}) }
+  } finally { await stopDevServer(child); await rm(cwd,{ recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) }
+})
+
+// M5: exercise the real CLI and generated validator with the pinned Anyo tooling.
+for (const [mode, flags] of [
+  ['loader', ['--avatars']], ['loader', ['--animations']],
+  ['loader', ['--avatars', '--animations']],
+  ['atlas', ['--avatars', '--animations']],
+  ['both', ['--avatars', '--animations', '--modular', '--web-surface=dashboard']]
+]) test(`M5 CLI ${mode}: ${flags.join(' ')}`, async t => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'anyo-m5-cli-'))
+  t.after(() => rm(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }))
+  const args = ['world', `--mode=${mode}`, ...flags, ...(mode === 'loader' ? [] : ['--lat=14.5', '--lng=121.0'])]
+  const run = spawnSync(process.execPath, [fileURLToPath(new URL('../bin/create-anyo-world.mjs', import.meta.url)), ...args], { cwd, encoding: 'utf8' })
+  assert.equal(run.status, 0, run.stderr)
+  const target = path.join(cwd, 'world')
+  const project = JSON.parse(await readFile(path.join(target, 'anyo.project.json'), 'utf8'))
+  assert.equal(project.world, './world.anyo.json')
+  assert.deepEqual(Object.keys(project.capabilities).sort(), ['avatars','animations'].filter(k=>flags.includes('--'+k)).sort())
+  for (const [kind, {manifest}] of Object.entries(project.capabilities)) {
+    assert.equal(manifest, `./assets/${kind}/${kind}.json`)
+    const catalog = JSON.parse(await readFile(path.join(target, manifest), 'utf8'))
+    assert.deepEqual(catalog, kind==='avatars' ? {version:1,default:null,avatars:{}} : {version:4,clips:{},actions:{}})
+  }
+  const check = await runGeneratedScript(target, 'check')
+  assert.equal(check.status, 0, check.stderr)
+  assert.match(check.stdout, /World character catalogs: PASS/)
+  assert.ok(await readFile(path.join(target,'dist/world.anyo.json')))
+  assert.ok(await readFile(path.join(target,'docs/world-characters.md')))
+  if (flags.includes('--avatars')) {
+    await writeFile(path.join(target,'assets/avatars/avatars.json'), JSON.stringify({version:1,default:'pilot',avatars:{pilot:{name:'Pilot',src:'./missing.vrm'}}}))
+    const invalid = await runGeneratedScript(target, 'validate')
+    assert.notEqual(invalid.status, 0)
+    assert.match(invalid.stderr, /Missing project file/)
+  }
+})
+
+test('M5 default omits optional character tooling and declarations', async t => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'anyo-m5-default-'))
+  t.after(() => rm(cwd,{ recursive: true, force: true, maxRetries: 5, retryDelay: 100 }))
+  const {target} = await scaffold(['world','--mode=loader'],{cwd,log(){}})
+  assert.equal(JSON.parse(await readFile(path.join(target,'anyo.project.json'))).capabilities,undefined)
+  assert.deepEqual((await readdir(path.join(target,'scripts'))).sort(), ['anyo-documents.mjs','bundle.mjs','dev.mjs','validate.mjs'])
+  assert.deepEqual(await readdir(path.join(target,'assets')),['.gitkeep'])
+  assert.doesNotMatch(await readFile(path.join(target,'scripts/validate.mjs'),'utf8'),/character-assets/)
+  await assert.rejects(scaffold(['invalid','--mode=loader','--avatars=false'],{cwd,log(){}}),/boolean flag/)
+})
+
+test('M5 explicit force keeps authored character catalogs and declarations', async t => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'anyo-m5-force-'))
+  t.after(() => rm(cwd,{ recursive: true, force: true, maxRetries: 5, retryDelay: 100 }))
+  const args = ['world','--mode=loader']
+  const {target} = await scaffold([...args,'--avatars'],{cwd,log(){}})
+  const catalog = path.join(target,'assets/avatars/avatars.json')
+  const custom = '{"version":1,"avatars":{}}\n\n'
+  await writeFile(catalog,custom)
+  await scaffold([...args,'--force','--animations'],{cwd,log(){}})
+  await scaffold([...args,'--force'],{cwd,log(){}})
+  assert.equal(await readFile(catalog,'utf8'),custom)
+  assert.deepEqual(Object.keys(JSON.parse(await readFile(path.join(target,'anyo.project.json'))).capabilities).sort(),['animations','avatars'])
+  assert.match(await readFile(path.join(target,'scripts/validate.mjs'),'utf8'),/validateCharacterAssets/)
+})
+
+test('interactive setup offers a standalone Loader default and prints next steps', async t => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'anyo-interactive-'))
+  t.after(() => rm(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }))
+  const answers = ['My World', '']
+  const prompts = [], messages = []
+  const result = await scaffold([], { cwd, readline: { async question(prompt) { prompts.push(prompt); return answers.shift() } }, log: message => messages.push(message) })
+  assert.equal(result.id, 'my-world')
+  assert.equal(result.mode, 'loader')
+  assert.equal(prompts.length, 2)
+  assert.match(prompts[1], /loader \/ atlas \/ both/)
+  assert.match(messages.join('\n'), /cd my-world\nnpm install|cd my-world\n  npm install/)
+  const readme = await readFile(path.join(result.target, 'README.md'), 'utf8')
+  assert.match(readme, /127\.0\.0\.1:4173/)
+  assert.match(readme, /GitHub Pages is optional/)
+  assert.doesNotMatch(readme, /5173|M4 or later/)
+})
+
+test('interactive mode can select Atlas, and named invocations retain the Atlas default', async t => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'anyo-interactive-atlas-'))
+  t.after(() => rm(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }))
+  const answers = ['map-world', 'atlas', '14.5', '121']
+  const result = await scaffold([], { cwd, readline: { async question() { return answers.shift() } }, log() {} })
+  assert.equal(result.mode, 'atlas')
+  assert.ok(result.manifest)
+  const named = await scaffold(['named-map', '--lat=14.5', '--lng=121'], { cwd, log() {} })
+  assert.equal(named.mode, 'atlas')
+})
+
+test('CLI rejects unknown valued options and extra names before writing files', async t => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'anyo-cli-options-'))
+  t.after(() => rm(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }))
+  await assert.rejects(scaffold(['world', '--mode=loader', '--avatr=yes'], { cwd, log() {} }), /Unknown option --avatr/)
+  await assert.rejects(scaffold(['one', 'two', '--mode=loader'], { cwd, log() {} }), /one project name/)
+  assert.deepEqual(await readdir(cwd), [])
+})
+
+test('optional Web Surface is a minimal accessible interaction example', async t => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'anyo-web-minimal-'))
+  t.after(() => rm(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }))
+  const { target } = await scaffold(['world', '--mode=loader', '--title=<Test>', '--web-surface=panel'], { cwd, log() {} })
+  const root = path.join(target, 'web-surface/panel')
+  const html = await readFile(path.join(root, 'index.html'), 'utf8')
+  const css = await readFile(path.join(root, 'style.css'), 'utf8')
+  assert.match(html, /&lt;Test&gt;/)
+  assert.match(html, /aria-live="polite"/)
+  assert.match(html, /button id="pulse" type="button"/)
+  assert.match(css, /:focus-visible\{outline:/)
+  assert.doesNotMatch(css, /gradient|box-shadow/)
+})
+
+test('generated projects pin Anyo tooling and leave dependency locking to npm', async t => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'anyo-starter-lock-'))
+  t.after(() => rm(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }))
+  const args = ['world', '--mode=loader']
+  const { target } = await scaffold(args, { cwd, log() {} })
+  const file = path.join(target, 'package-lock.json')
+  const pkg = JSON.parse(await readFile(path.join(target, 'package.json'), 'utf8'))
+  assert.deepEqual(pkg.devDependencies, { '@blcklab/anyo': expectedAnyoVersion })
+  await assert.rejects(readFile(file), { code: 'ENOENT' })
+  // Regeneration must not overwrite an npm-owned lockfile, regardless of its contents.
+  const original = JSON.stringify({ name: pkg.name, version: pkg.version, lockfileVersion: 3, requires: true,
+    packages: { '': { name: pkg.name, version: pkg.version, devDependencies: pkg.devDependencies } } }, null, 2) + '\n'
+  await writeFile(file, original)
+  await scaffold([...args, '--force'], { cwd, log() {} })
+  assert.equal(await readFile(file, 'utf8'), original)
+})
+
+test('CLI version and help match the package version', async () => {
+  const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
+  const cli = fileURLToPath(new URL('../bin/create-anyo-world.mjs', import.meta.url))
+  const version = spawnSync(process.execPath, [cli, '--version'], { encoding: 'utf8' })
+  assert.equal(version.status, 0, version.stderr)
+  assert.equal(version.stdout.trim(), pkg.version)
+  const help = spawnSync(process.execPath, [cli, '--help'], { encoding: 'utf8' })
+  assert.equal(help.status, 0, help.stderr)
+  assert.ok(help.stdout.startsWith(`create-anyo-world ${pkg.version}\n`))
 })

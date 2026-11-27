@@ -23,3 +23,11 @@ For a stable version, push a Git tag and include its ref in the route:
 ```
 
 If you scaffolded with `--github=OWNER/REPOSITORY`, the generator includes the relevant links in your README. Atlas projects also receive local and repository manifest links when applicable.
+
+## Static hosting
+
+GitHub Pages is optional. You may also serve the repository's public world files from any HTTPS static host that supports cross-origin requests from your Loader. Publish `anyo.project.json`, `world.anyo.json`, the assets, imported objects and registered Web Surface applications, retaining their relative directory layout. Include `atlas.world.json` when needed.
+
+In World Loader, enter the hosted directory in **World URL**, or use `?registryRoot=` with the URL-encoded directory. The host must serve the real binary files, not Git LFS pointer text. Do not expose secrets, local development records or `node_modules/`. The project dev server is only for local development.
+
+Before publishing, confirm that you have permission to distribute every asset. Test the branch and a pinned tag in the Loader; a successful local build does not establish CDN or browser compatibility.

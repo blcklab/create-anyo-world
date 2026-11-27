@@ -1,29 +1,37 @@
 #!/usr/bin/env node
-import { mkdir, writeFile, access } from 'node:fs/promises'
+import { mkdir, writeFile, access, readFile, cp } from 'node:fs/promises'
 import path from 'node:path'
 import process from 'node:process'
+import { fileURLToPath } from 'node:url'
+import { scaffoldCharacterAssets } from '../templates/scripts/character-assets.mjs'
 import readline from 'node:readline/promises'
 import { stdin as input, stdout as output } from 'node:process'
 
-const VERSION = '0.6.1'
+const { version: VERSION } = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
 const ANYO_TOOLING_VERSION = '0.11.0-rc.37'
-const HELP = `create-anyo-world ${VERSION}\n\nUsage:\n  npm create anyo-world@latest my-world -- --lat=14.556201 --lng=121.024261\n  npm create anyo-world@latest my-world -- --mode=loader --github=blcklab/my-world\n  npm create anyo-world@latest my-world -- --mode=both --lat=14.556201 --lng=121.024261 --github=blcklab/my-world --web-surface=dashboard --web-resolution=full-hd\n\nOptions:\n  --mode=<atlas|loader|both>  Target workflow (default: atlas)\n  --title=<name>              Display title\n  --lat=<latitude>            World latitude (Atlas/both mode)\n  --lng=<longitude>           World longitude (Atlas/both mode)\n  --zoom=<3-20>               Preferred Atlas zoom (default: 20)\n  --osm=<type/id>             Optional exact OSM binding\n  --github=<user/repo>        GitHub repository used by Atlas/World Loader links\n  --ref=<git-ref>             Optional immutable tag/commit/branch\n  --web-surface[=<app-id>]    Add a repository-hosted Web Surface app (default id: dashboard)\n  --web-resolution=<quality>  360p, 540p, 720p/hd, or 1080p/full-hd (default: hd)\n  --modular                  Scaffold models/ with a native Anyo Object 0.1 example\n  --force                     Write into a non-empty/existing project directory\n  --version                   Show version\n  --help                      Show this help\n`
+const HELP = `create-anyo-world ${VERSION}\n\nUsage:\n  npm create anyo-world@latest  (interactive)\n  npm create anyo-world@latest my-world -- --lat=14.556201 --lng=121.024261\n  npm create anyo-world@latest my-world -- --mode=loader --github=blcklab/my-world\n  npm create anyo-world@latest my-world -- --mode=both --lat=14.556201 --lng=121.024261 --github=blcklab/my-world --web-surface=dashboard --web-resolution=full-hd\n\nOptions:\n  --mode=<atlas|loader|both>  Target host (interactive default: loader; named default: atlas)\n  --title=<name>              Display title\n  --lat=<latitude>            World latitude (Atlas/both mode)\n  --lng=<longitude>           World longitude (Atlas/both mode)\n  --zoom=<3-20>               Preferred Atlas zoom (default: 20)\n  --osm=<type/id>             Optional exact OSM binding\n  --github=<user/repo>        GitHub repository used by Atlas/World Loader links\n  --ref=<git-ref>             Optional tag, commit or branch\n  --web-surface[=<app-id>]    Add a repository-hosted Web Surface app (default id: dashboard)\n  --web-resolution=<quality>  360p, 540p, 720p/hd, or 1080p/full-hd (default: hd)\n  --modular                  Scaffold models/ with a native Anyo Object 0.1 example\n  --avatars                   Scaffold an optional world avatar catalog\n  --animations                Scaffold an optional world animation catalog\n  --force                     Write into a non-empty/existing project directory\n  --version                   Show version\n  --help                      Show this help\n`
 
 function parseArgs(argv) {
   const options = { force: false }
   const positional = []
+  const valuedOptions = new Set(['mode', 'title', 'lat', 'lng', 'zoom', 'osm', 'github', 'ref', 'web-surface', 'web-resolution'])
   for (const arg of argv) {
     if (arg === '--help' || arg === '-h') options.help = true
     else if (arg === '--version' || arg === '-v') options.version = true
     else if (arg === '--force') options.force = true
     else if (arg === '--modular') options.modular = true
+    else if (arg === '--avatars') options.avatars = true
+    else if (arg === '--animations') options.animations = true
+    else if (/^--(?:avatars|animations)=/.test(arg)) throw new Error('Use --avatars or --animations as a boolean flag without a value.')
     else if (arg === '--web-surface') options['web-surface'] = true
     else if (arg.startsWith('--') && arg.includes('=')) {
       const [key, ...rest] = arg.slice(2).split('=')
+      if (!valuedOptions.has(key)) throw new Error(`Unknown option --${key}. Run --help for supported options.`)
       options[key] = rest.join('=')
     } else if (!arg.startsWith('-')) positional.push(arg)
     else throw new Error(`Unknown option ${arg}`)
   }
+  if (positional.length > 1) throw new Error('Supply one project name. Run --help for usage.')
   return { projectName: positional[0] || null, options }
 }
 
@@ -372,17 +380,17 @@ server.listen(port, host, () => {
   const authority = displayHost.includes(':') ? '[' + displayHost + ']' : displayHost
   const sourceRoot = 'http://' + authority + ':' + port + '/'
   console.log('Anyo world source: ' + sourceRoot + entry)
-  console.log('World Loader preview (start Loader separately): http://localhost:5173/?registryRoot=' + encodeURIComponent(sourceRoot))
+  console.log('World Loader preview (start Loader separately): http://127.0.0.1:4173/?registryRoot=' + encodeURIComponent(sourceRoot))
 })
 `
 }
 
-function validateSource() {
+function validateSource(characters = false) {
   return `import { inspectWorldDocument, resolveWorldDocumentImports } from '@blcklab/anyo'
 import { access, readFile, readdir, realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { loadProjectAnyoDocument, readRootWorld, rootSourceContext } from './anyo-documents.mjs'
-
+${characters ? "import { validateCharacterAssets } from './character-assets.mjs'\n" : ''}
 async function exists(file) { try { await access(file); return true } catch { return false } }
 function formatIssues(issues) { return issues.slice(0, 8).map(issue => issue.code + ' ' + issue.path + ': ' + issue.message).join('\\n') }
 function countImports(imports) { return Object.values(imports).reduce((total, item) => total + 1 + countImports(item.imports || {}), 0) }
@@ -447,7 +455,7 @@ if(await exists('web-surface')) {
 }
 for(const entity of appEntities) if(!registered.has(entity.webSurface.source.app)) throw new Error('World references unregistered Web Surface app: '+entity.webSurface.source.app)
 if(registered.size) console.log('Web Surface apps: PASS ('+registered.size+')')
-console.log('Anyo project contract: PASS')
+${characters ? "const characters = await validateCharacterAssets()\nif (characters.declared) console.log('World character catalogs: PASS', characters)\n" : ''}console.log('Anyo project contract: PASS')
 console.log('Anyo World Loader contract: PASS')
 `
 }
@@ -489,9 +497,9 @@ function worldLoaderRepositoryRoute(repository, ref) {
 function webAppFiles(appId, title) {
   const appTitle = `${title} Dashboard`
   const manifest = { schema: 'anyo-web-app@1', id: appId, title: appTitle, entry: './index.html', description: `${title} repository-hosted Web Surface application.` }
-  const html = `<!doctype html>\n<html lang="en">\n<head>\n  <meta charset="utf-8">\n  <meta name="viewport" content="width=device-width, initial-scale=1">\n  <title>${escapeHtml(appTitle)}</title>\n  <link rel="stylesheet" href="./style.css">\n</head>\n<body>\n  <main class="shell">\n    <header class="topbar">\n      <div><p class="eyebrow">ANYO WEB SURFACE</p><h1>${escapeHtml(title)}</h1></div>\n      <span class="status" id="status">ONLINE</span>\n    </header>\n    <section class="hero">\n      <div><p class="eyebrow">REPOSITORY APPLICATION</p><h2>Normal HTML, CSS and JavaScript inside your Anyo world.</h2><p>Edit this app under <code>web-surface/${escapeHtml(appId)}/</code>. World Loader discovers it automatically from <code>web-surface.json</code>.</p></div>\n      <button id="pulse" type="button">Run interaction</button>\n    </section>\n    <section class="grid" aria-label="Runtime cards">\n      <article><span>Surface</span><strong>Interactive</strong></article>\n      <article><span>Layout</span><strong>Responsive</strong></article>\n      <article><span>Security</span><strong>Sandboxed</strong></article>\n    </section>\n    <section class="log" aria-live="polite"><span>EVENT</span><output id="event">Ready for input.</output></section>\n  </main>\n  <script type="module" src="./app.js"></script>\n</body>\n</html>\n`
-  const css = `:root{color-scheme:dark;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#080c12;color:#f7fafc}*{box-sizing:border-box}body{margin:0;min-width:280px;min-height:100vh;background:radial-gradient(circle at 85% 0%,#12314a 0,transparent 36%),#080c12}.shell{min-height:100vh;padding:clamp(20px,4vw,64px);display:grid;align-content:center;gap:clamp(18px,3vw,36px)}.topbar,.hero,.grid,.log{width:min(1120px,100%);margin-inline:auto}.topbar{display:flex;align-items:center;justify-content:space-between;gap:24px}.eyebrow{margin:0 0 8px;color:#64d8ff;font-size:.72rem;font-weight:800;letter-spacing:.18em}.topbar h1,.hero h2{margin:0}.topbar h1{font-size:clamp(1.5rem,3vw,2.5rem)}.status{padding:8px 12px;border:1px solid #2b6279;border-radius:999px;color:#8ce7ff;font-size:.72rem;font-weight:800}.hero{padding:clamp(24px,5vw,56px);border:1px solid #203040;border-radius:28px;background:linear-gradient(145deg,rgba(18,29,42,.96),rgba(8,12,18,.94));box-shadow:0 22px 70px rgba(0,0,0,.32);display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:28px}.hero h2{max-width:780px;font-size:clamp(2rem,5vw,4.8rem);line-height:.98;letter-spacing:-.045em}.hero p:not(.eyebrow){max-width:720px;color:#a8b7c6;line-height:1.7}.hero code{color:#d6f5ff}button{border:0;border-radius:14px;padding:14px 18px;background:#eafaff;color:#07121a;font:inherit;font-weight:800;cursor:pointer}button:hover,button:focus-visible{background:#7ee4ff;outline:none}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.grid article,.log{padding:18px 20px;border:1px solid #1f2d3a;border-radius:18px;background:#0d141d}.grid span,.log span{display:block;color:#6f8497;font-size:.72rem;letter-spacing:.12em}.grid strong{display:block;margin-top:6px;font-size:1.15rem}.log{display:grid;grid-template-columns:auto 1fr;gap:18px;align-items:center}.log output{color:#c8d5df}@media(max-width:760px){.hero{grid-template-columns:1fr}.grid{grid-template-columns:1fr}.topbar{align-items:flex-start}.status{margin-top:4px}}\n`
-  const js = `const button=document.querySelector('#pulse');const output=document.querySelector('#event');const status=document.querySelector('#status');let count=0;button?.addEventListener('click',()=>{count+=1;output.value='Interaction '+count+' received at '+new Date().toLocaleTimeString();status.textContent=count%2?'ACTIVE':'ONLINE'});\n`
+  const html = `<!doctype html>\n<html lang="en">\n<head>\n  <meta charset="utf-8">\n  <meta name="viewport" content="width=device-width, initial-scale=1">\n  <title>${escapeHtml(appTitle)}</title>\n  <link rel="stylesheet" href="./style.css">\n</head>\n<body>\n  <main>\n    <header><p class="eyebrow">Anyo / Web Surface</p><h1>${escapeHtml(title)}</h1></header>\n    <section aria-labelledby="example-title">\n      <h2 id="example-title">Interaction example</h2>\n      <p>Edit this app in <code>web-surface/${escapeHtml(appId)}/</code>.</p>\n      <button id="pulse" type="button">Count interaction</button>\n      <output id="event" aria-live="polite">0 interactions</output>\n    </section>\n  </main>\n  <script type="module" src="./app.js"></script>\n</body>\n</html>\n`
+  const css = `:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#151719;color:#f0f0f0}*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center}main{width:min(100%,52rem);padding:clamp(1rem,5vw,4rem)}header{margin-bottom:2rem}.eyebrow{color:#a7abad;font-size:.85rem}h1{font-size:clamp(1.5rem,4vw,3rem);font-weight:550;line-height:1.15;overflow-wrap:anywhere}h2{font-size:1.15rem;font-weight:550}section{border-top:1px solid #45484a;padding-top:1.25rem}p{color:#b9bdc0;line-height:1.6;overflow-wrap:anywhere}button{font:inherit;min-height:44px;border:1px solid #999;border-radius:6px;padding:.65rem 1rem;background:#e9e9e9;color:#151719;cursor:pointer}button:hover{background:#fff}button:focus-visible{outline:3px solid #8dc6ff;outline-offset:4px}output{display:block;margin-top:1rem;color:#b9bdc0;font-variant-numeric:tabular-nums}\n`
+  const js = `const button = document.querySelector('#pulse');\nconst output = document.querySelector('#event');\nlet count = 0;\nbutton.addEventListener('click', () => {\n  count += 1;\n  output.value = count + (count === 1 ? ' interaction' : ' interactions');\n});\n`
   return { manifest, html, css, js }
 }
 
@@ -506,11 +514,11 @@ function fallbackSvg(title) {
 function generatedReadme({ title, mode, latitude, longitude, canonicalLotId, osm, localAtlasUrl, localDirectAtlasUrl, geographicAtlasUrl, github, publicAtlasUrl, directAtlasUrl, worldLoaderRoute, webApp, modular }) {
   const atlasEnabled = mode !== 'loader'
   const locationSection = atlasEnabled ? `## Location\n\n- Latitude: ${latitude.toFixed(6)}\n- Longitude: ${longitude.toFixed(6)}\n- Lot ID: \`${canonicalLotId}\`\n${osm ? `- OSM: \`${osm.type}/${osm.id}\`\n` : ''}\n` : ''
-  const loaderSection = `## Anyo World Loader\n\nThe repository root \`world.anyo.json\` is the World Loader entry. ${github ? `Open the repository route after the Loader is running:\n\n\`\`\`text\nhttp://localhost:5173${worldLoaderRoute}\n\`\`\`\n` : 'After publishing, enter `OWNER/REPOSITORY` in World Loader or open its `/OWNER/REPOSITORY` route.\n'}\nWorld Loader resolves \`world.anyo.json\` from the selected repository ref. Do not add Loader-specific backend fields to the world document.\n\n`
+  const loaderSection = `## Anyo World Loader\n\nThe repository root \`world.anyo.json\` is the World Loader entry. ${github ? `Open the repository route after the Loader is running:\n\n\`\`\`text\nhttp://127.0.0.1:4173${worldLoaderRoute}\n\`\`\`\n` : 'After publishing, enter `OWNER/REPOSITORY` in World Loader or open its `/OWNER/REPOSITORY` route.\n'}\nWorld Loader resolves \`world.anyo.json\` from the selected repository ref. Do not add Loader-specific backend fields to the world document.\n\n`
   const atlasSection = atlasEnabled ? `## Atlas\n\nOpen Atlas against the local manifest:\n\n\`\`\`text\n${localAtlasUrl}\n\`\`\`\n\nOpen the authored world inside its streamed neighborhood:\n\n\`\`\`text\n${localDirectAtlasUrl}\n\`\`\`\n\nThe manifest owns the world location, so the Atlas URL does not need coordinates. Without an exact OSM ID the world is location-only: Atlas can discover it nearby but will not claim or replace an arbitrary building. Supply an exact OSM ID for deterministic building replacement.\n\n${github ? `Repository Atlas URL:\n\n\`\`\`text\n${publicAtlasUrl}\n\`\`\`\n\nDirect 3D URL:\n\n\`\`\`text\n${directAtlasUrl}\n\`\`\`\n\n` : ''}Geographic navigation remains available:\n\n\`\`\`text\n${geographicAtlasUrl}\n\`\`\`\n\n` : ''
   const authoringSection = modular ? `## Modular authoring\n\nThis starter keeps the repository entry at \`world.anyo.json\` and places one reusable native Anyo object at \`models/centerpiece.anyo.json\`. The root world imports it by alias. Add more Object 0.1 documents under \`models/\` as the project grows.\n\n` : `## Authoring\n\nThis starter intentionally keeps everything in one World 0.9 file. If you want an example native-object layout in a new project, regenerate with \`--modular\`.\n\n`
   const webSection = webApp ? `## Web Surface\n\nA framework-agnostic repository web application is included at:\n\n\`\`\`text\nweb-surface/${webApp.id}/\n├─ web-surface.json\n├─ index.html\n├─ style.css\n├─ app.js\n└─ assets/\n\`\`\`\n\nThe manifest uses \`anyo-web-app@1\`. World Loader discovers it automatically at the pinned repository ref. The matching world entity uses \`source.type = "app"\` and app id \`${webApp.id}\`. Its requested presentation resolution is **${webApp.resolution[0]}×${webApp.resolution[1]}**.\n\nKeep application HTML/CSS/JS in this folder; do not embed executable HTML inside \`world.anyo.json\`. Normal browser security and sandbox behavior still apply.\n\n` : ''
-  return `# ${title}\n\nPortable Anyo world repository generated for **${mode === 'loader' ? 'World Loader' : mode === 'both' ? 'Atlas + World Loader' : 'Atlas (and directly loadable by World Loader)'}**.\n\n${locationSection}## Anyo project\n\nEdit \`world.anyo.json\` directly or open the folder in Anyo Editor using \`anyo.project.json\`. Local editor state in \`.anyo/\` is ignored.\n\n## Develop\n\n\`\`\`bash\nnpm install\nnpm run validate\nnpm run bundle\nnpm run dev\n\`\`\`\n\n\`npm run validate\` uses the pinned \`@blcklab/anyo\` package as the World 0.9 schema and import authority. \`npm run bundle\` writes a deterministic standalone document to \`dist/world.anyo.json\` with native Anyo object imports flattened.\n\nStart Anyo World Loader 0.6.0-rc.1 separately (\`npm run dev\` in its repository), then open:\n\n\`\`\`text\nhttp://localhost:5173/?registryRoot=http%3A%2F%2F127.0.0.1%3A4174%2F\n\`\`\`\n\nThe world dev server serves JSON and assets, not a second renderer. Refresh the Loader after editing. Use the printed URL if you change ports.\n\nRun multiple local worlds on separate ports with \`npm run dev -- --port=4175\` (or \`--port 4175\`).\n\n${loaderSection}${atlasSection}${authoringSection}${webSection}## Publish\n\n1. Push this folder to GitHub.\n2. Keep \`anyo.project.json\` and \`world.anyo.json\` at the repository root.${atlasEnabled ? '\n3. Keep `atlas.world.json` at the repository root for Atlas.\n4. Prefer a version tag for stable public links.' : '\n3. Prefer a version tag for stable public links.'}\n`
+  return `# ${title}\n\nPortable Anyo world repository generated for **${mode === 'loader' ? 'World Loader' : mode === 'both' ? 'Atlas + World Loader' : 'Atlas (and directly loadable by World Loader)'}**.\n\n${locationSection}## Anyo project\n\nEdit \`world.anyo.json\` directly or open the folder in Anyo Editor using \`anyo.project.json\`. Local editor state in \`.anyo/\` is ignored.\n\n## Develop\n\n\`\`\`bash\nnpm install\nnpm run check\nnpm run dev\n\`\`\`\n\n\`npm run validate\` uses the pinned \`@blcklab/anyo\` package as the World 0.9 schema and import authority. \`npm run bundle\` writes a deterministic standalone document to \`dist/world.anyo.json\` with native Anyo object imports flattened.\n\nStart Anyo World Loader separately (\`npm run dev\` in its repository), then open:\n\n\`\`\`text\nhttp://127.0.0.1:4173/?registryRoot=http%3A%2F%2F127.0.0.1%3A4174%2F\n\`\`\`\n\nThe world dev server serves JSON and assets, not a second renderer. Refresh the Loader after editing. Use the printed URL if you change ports.\n\nRun multiple local worlds on separate ports with \`npm run dev -- --port=4175\` (or \`--port 4175\`).\n\n${loaderSection}${atlasSection}${authoringSection}${webSection}## Publish\n\n1. Run \`npm run check\` and commit the source files, assets and package lockfile.\n2. Push to a public GitHub repository. GitHub Pages is optional.\n3. Keep \`anyo.project.json\` and \`world.anyo.json\` at the repository root.${atlasEnabled ? '\n4. Keep `atlas.world.json` at the repository root for Atlas.\n5. Prefer a version tag for stable public links.' : '\n4. Prefer a version tag for stable public links.'}\n`
 }
 
 export async function scaffold(argv = process.argv.slice(2), io = {}) {
@@ -523,7 +531,13 @@ export async function scaffold(argv = process.argv.slice(2), io = {}) {
     const rawName = parsed.projectName || await rl.question('Project name: ')
     const id = slug(rawName)
     const title = String(parsed.options.title || titleFromSlug(id)).trim() || titleFromSlug(id)
-    const mode = normalizeMode(parsed.options.mode)
+    // Preserve the historical Atlas default for named and geographic invocations.
+    // A fresh interactive invocation offers a host choice instead of assuming a map.
+    const hasGeography = ['lat', 'lng', 'zoom', 'osm'].some(key => parsed.options[key] !== undefined)
+    const chosenMode = parsed.options.mode ?? (!parsed.projectName && !hasGeography
+      ? (await rl.question('Target (loader / atlas / both) [loader]: ')).trim() || 'loader'
+      : undefined)
+    const mode = normalizeMode(chosenMode)
     const atlasEnabled = mode !== 'loader'
     const modular = parsed.options.modular === true
 
@@ -554,6 +568,13 @@ export async function scaffold(argv = process.argv.slice(2), io = {}) {
     const gitRef = normalizeRef(parsed.options.ref)
     const target = path.resolve(io.cwd || process.cwd(), id)
     if (await exists(target) && !parsed.options.force) throw new Error(`Target ${target} already exists. Use --force to overwrite starter files.`)
+    const characterOptions = { avatars: parsed.options.avatars === true, animations: parsed.options.animations === true }
+    const previousProjectPath = path.join(target, 'anyo.project.json')
+    // Keep existing character declarations on explicit --force regeneration.
+    const previousProject = parsed.options.force && await exists(previousProjectPath)
+      ? JSON.parse(await readFile(previousProjectPath, 'utf8')) : null
+    const previousCapabilities = previousProject?.capabilities
+    const characters = characterOptions.avatars || characterOptions.animations || Boolean(previousCapabilities && (Object.hasOwn(previousCapabilities, 'avatars') || Object.hasOwn(previousCapabilities, 'animations')))
     await mkdir(path.join(target, 'assets'), { recursive: true })
     await mkdir(path.join(target, 'scripts'), { recursive: true })
     await mkdir(path.join(target, 'web-surface'), { recursive: true })
@@ -583,15 +604,16 @@ export async function scaffold(argv = process.argv.slice(2), io = {}) {
     const readme = generatedReadme({ title, mode, latitude, longitude, canonicalLotId, osm, localAtlasUrl, localDirectAtlasUrl, geographicAtlasUrl, github, publicAtlasUrl, directAtlasUrl, worldLoaderRoute, webApp, modular })
 
     const project = projectDocument({ id, title, atlasEnabled })
+    if (previousCapabilities !== undefined) project.capabilities = previousCapabilities
     const writes = [
       writeFile(path.join(target, 'world.anyo.json'), json(worldDocument({ id, title, latitude, longitude, atlasEnabled, webApp, modular }))),
       writeFile(path.join(target, 'package.json'), json(pkg)),
-      writeFile(path.join(target, 'README.md'), readme),
+      writeFile(path.join(target, 'README.md'), readme + (characters ? '\n## World-owned characters\n\nSee [World characters](docs/world-characters.md) for adding avatars and animations. Empty catalogs are valid; no binary assets are included. Use a World Loader that supports world-owned characters and nullable avatar defaults.\n' : '')),
       writeFile(path.join(target, '.gitignore'), 'node_modules/\n/dist/\n.DS_Store\n.anyo/\n.env\n.env.*\n!.env.example\n'),
       writeFile(path.join(target, 'assets', '.gitkeep'), ''),
       writeFile(path.join(target, 'web-surface', '.gitkeep'), ''),
       writeFile(path.join(target, 'scripts', 'dev.mjs'), devServerSource()),
-      writeFile(path.join(target, 'scripts', 'validate.mjs'), validateSource()),
+      writeFile(path.join(target, 'scripts', 'validate.mjs'), validateSource(characters)),
       writeFile(path.join(target, 'scripts', 'bundle.mjs'), bundleSource()),
       writeFile(path.join(target, 'scripts', 'anyo-documents.mjs'), anyoDocumentsSource()),
     ]
@@ -611,6 +633,14 @@ export async function scaffold(argv = process.argv.slice(2), io = {}) {
     }
     await Promise.all(writes)
     await writeFile(path.join(target, 'anyo.project.json'), json(project))
+    if (characters) {
+      const templates = fileURLToPath(new URL('../templates/scripts/', import.meta.url))
+      await cp(path.join(templates, 'character-assets.mjs'), path.join(target, 'scripts', 'character-assets.mjs'))
+      await cp(path.join(templates, 'character-contract'), path.join(target, 'scripts', 'character-contract'), { recursive: true })
+      await mkdir(path.join(target, 'docs'), { recursive: true })
+      await cp(fileURLToPath(new URL('../docs/world-characters.md', import.meta.url)), path.join(target, 'docs', 'world-characters.md'))
+      await scaffoldCharacterAssets(target, characterOptions)
+    }
 
     ;(io.log || console.log)(`Created ${id}`)
     ;(io.log || console.log)(`Mode: ${mode}`)
@@ -620,7 +650,9 @@ export async function scaffold(argv = process.argv.slice(2), io = {}) {
     if (publicAtlasUrl) (io.log || console.log)(`GitHub Atlas: ${publicAtlasUrl}`)
     if (worldLoaderRoute) (io.log || console.log)(`World Loader route: ${worldLoaderRoute}`)
     ;(io.log || console.log)(`Authoring: ${modular ? 'modular' : 'single-file'} World 0.9`)
+    if (characters) (io.log || console.log)('Characters: optional world-owned catalogs')
     if (webApp) (io.log || console.log)(`Web Surface: ${webApp.id} (${webApp.resolution[0]}x${webApp.resolution[1]})`)
+    ;(io.log || console.log)(`\nNext steps:\n  cd ${id}\n  npm install\n  npm run check\n  npm run dev\n\nStart your World Loader separately and open the preview URL.`)
     return {
       target, id, title, mode, lotId: canonicalLotId, manifest, github, ref: gitRef,
       atlasUrl: publicAtlasUrl, directAtlasUrl, localAtlasUrl, localDirectAtlasUrl, geographicAtlasUrl,

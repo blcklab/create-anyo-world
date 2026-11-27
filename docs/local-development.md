@@ -17,10 +17,10 @@ In a separate terminal, open your Anyo World Loader checkout and run its develop
 npm run dev
 ```
 
-With the default Loader port 5173 and world port 4174, the preview URL is:
+With the default Loader port 4173 and world port 4174, the preview URL is:
 
 ```text
-http://localhost:5173/?registryRoot=http%3A%2F%2F127.0.0.1%3A4174%2F
+http://127.0.0.1:4173/?registryRoot=http%3A%2F%2F127.0.0.1%3A4174%2F
 ```
 
 The world server prints this URL when it starts. If the Loader uses a different port, update the first port in the URL. Edit the JSON or assets and refresh the Loader. The generator does not include a browser renderer or automatic live reload.

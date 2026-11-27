@@ -14,6 +14,7 @@ my-world/
 │   ├── bundle.mjs
 │   └── anyo-documents.mjs
 ├── package.json
+├── package-lock.json  # created by npm install
 ├── .gitignore
 └── README.md
 ```
@@ -60,3 +61,5 @@ Atlas worlds include map entrance/exit components and an authored entrance selec
 ## Schemas
 
 The generator's repository contracts are available in [`contracts/`](../contracts/). The world and native object schemas belong to the Anyo core package, rather than being duplicated here.
+
+New projects pin the Anyo validation tooling in `package.json`. Run `npm install` to create your project’s lockfile from npm registry metadata, then commit it and use `npm ci` for reproducible installations. Regenerating with `--force` leaves existing lockfiles untouched; run `npm install` if the manifest has changed.

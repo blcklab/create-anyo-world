@@ -4,7 +4,7 @@ Create JSON-first 3D world projects for [Anyo](https://github.com/blcklab/anyo),
 
 ## Getting started
 
-Use Node.js 20 or newer.
+Use Node.js 20 or newer. Run `npm create anyo-world@latest` for interactive setup, or specify a name and options:
 
 ```sh
 npm create anyo-world@latest my-world -- --mode=loader
@@ -22,8 +22,10 @@ To see it in 3D, start Anyo World Loader separately and open the preview URL pri
 | Mode | Use it for |
 | --- | --- |
 | `loader` | Standalone worlds without a geographic location |
-| `atlas` (default) | Worlds placed on a real map |
+| `atlas` (named command default) | Worlds placed on a real map |
 | `both` | Geographic worlds intended for both Atlas and World Loader |
+
+The interactive setup defaults to Loader. Existing named commands without `--mode` retain the Atlas default.
 
 Add `--modular` to start with a reusable Anyo object, or `--web-surface=dashboard` to include an interactive HTML/CSS/JS application.
 
@@ -38,6 +40,8 @@ Run these inside your generated world:
 | `npm run bundle` | Write a single bundled world to `dist/world.anyo.json` |
 | `npm run check` | Validate and bundle |
 
+Add `--avatars` and/or `--animations` to include optional character catalogs, with no bundled binary assets.
+
 ## Documentation
 
 - [Getting started](docs/getting-started.md)
@@ -47,6 +51,7 @@ Run these inside your generated world:
 - [JSON world authoring](docs/world-authoring.md)
 - [Web Surfaces](docs/web-surfaces.md)
 - [Publishing a world repository](docs/publishing-worlds.md)
+- [World-owned characters](docs/world-characters.md)
 
 ## Contributing
 

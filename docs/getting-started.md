@@ -1,6 +1,6 @@
 # Getting started
 
-Install Node.js 20 or newer. Create a standalone world with:
+Install Node.js 20 or newer. Run `npm create anyo-world@latest` to choose a target interactively, or create a standalone world with:
 
 ```sh
 npm create anyo-world@latest my-world -- --mode=loader
@@ -30,6 +30,6 @@ For an Atlas world, supply latitude and longitude:
 npm create anyo-world@latest map-world -- --mode=atlas --lat=14.556201 --lng=121.024261
 ```
 
-For both Atlas and World Loader, use `--mode=both` with coordinates. Atlas is the default for historical compatibility. For a standalone scene, explicitly choose `--mode=loader`.
+For both Atlas and World Loader, use `--mode=both` with coordinates. Atlas remains the default for named commands without `--mode` for historical compatibility. Interactive setup defaults to Loader. For a standalone scene, explicitly choose `--mode=loader`.
 
 See the [CLI reference](cli.md) for all options.

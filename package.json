@@ -1,6 +1,6 @@
 {
   "name": "create-anyo-world",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "description": "Create portable Anyo project repositories for World Loader and Atlas, with editor-ready project metadata and framework-agnostic Web Surface applications.",
   "type": "module",
   "bin": {
@@ -12,7 +12,8 @@
     "docs",
     "README.md",
     "LICENSE",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "templates"
   ],
   "engines": {
     "node": ">=20"
